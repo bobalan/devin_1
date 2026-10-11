@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html lang="bg">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WING Snapshot Editor</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: Arial, sans-serif; background: #f0f2f5; color: #222; font-size: 14px; }
+
+.topbar { background: #1F4E79; color: #fff; padding: 10px 20px; display: flex; align-items: center; gap: 12px; }
+.topbar h1 { font-size: 15px; font-weight: 700; flex: 1; }
+.btn { font-size: 13px; padding: 6px 14px; border-radius: 5px; border: 1px solid rgba(255,255,255,0.3); background: rgba(255,255,255,0.15); color: #fff; cursor: pointer; }
+.btn:hover { background: rgba(255,255,255,0.28); }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn.save { background: #1e8449; border-color: #196f3d; }
+.btn.save:hover { background: #196f3d; }
+
+#dropZone { margin: 40px auto; max-width: 560px; border: 2px dashed #bbb; border-radius: 10px; padding: 54px 30px; text-align: center; color: #999; cursor: pointer; background: #fff; transition: border-color .2s, color .2s; }
+#dropZone:hover, #dropZone.drag-over { border-color: #2E86C1; color: #2E86C1; }
+#dropZone .icon { font-size: 40px; margin-bottom: 10px; }
+#dropZone p { font-size: 15px; margin-bottom: 4px; }
+#dropZone small { font-size: 12px; }
+
+#editor { display: none; padding: 14px 16px; }
+
+.tbl-wrap { overflow-x: auto; background: #fff; border: 1px solid #ccc; border-radius: 6px; }
+
+table { border-collapse: collapse; font-size: 12px; width: max-content; min-width: 100%; }
+
+thead th {
+  background: #dce6f1; padding: 6px 4px; text-align: center;
+  font-weight: 700; color: #1F4E79; font-size: 11px;
+  border: 1px solid #bbb; white-space: nowrap;
+  position: sticky; top: 0; z-index: 5;
+  overflow: hidden; resize: horizontal; min-width: 30px;
+}
+
+td { border: 1px solid #ddd; padding: 0; height: 26px; }
+tr:nth-child(even) td { background: #f5f8fc; }
+tr:nth-child(odd)  td { background: #fff; }
+tr.aux-row td { background: #fff8f5 !important; }
+tr.aux-row:nth-child(even) td { background: #fdf0eb !important; }
+
+td.ch-num {
+  text-align: center; color: #555; font-size: 11px; font-weight: 700;
+  background: #e8eef5 !important; white-space: nowrap; padding: 0 6px; min-width: 36px;
+}
+tr.aux-row td.ch-num { background: #f5e6e0 !important; color: #7B2C2C; }
+
+td.bool-cell { text-align: center; cursor: pointer; font-size: 13px; min-width: 36px; }
+td.bool-cell:hover { background: #eafaf1 !important; }
+td.bool-cell.dim { color: #bbb !important; cursor: default; }
+
+td input {
+  width: 100%; height: 100%; padding: 3px 6px;
+  border: none; background: transparent;
+  font-size: 12px; color: #222; font-family: Arial, sans-serif;
+  outline: none; display: block;
+}
+td input:disabled { color: #bbb; }
+
+td.cell-focus { outline: 2px solid #2E86C1; outline-offset: -2px; background: #d6eaf8 !important; }
+
+.hint { font-size: 11px; color: #999; margin-top: 8px; text-align: right; }
+
+
+tr.drop-target td { border-top: 2px solid #2E86C1 !important; }
+tr[draggable] { cursor: grab; }
+@media print {
+  .topbar, .hint, #dropZone { display: none !important; }
+  #editor { display: block !important; padding: 0; }
+  body { background: #fff; }
+  table { font-size: 10px; width: 100%; }
+  th, td { border: 0.5px solid #999 !important; }
+}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <h1 id="titlebar">🎛 WING Snapshot Editor</h1>
+  <button class="btn" onclick="document.getElementById('fileInput').click()">📂 Отвори .snap</button>
+  <button class="btn" onclick="window.print()">🖨 Печат</button>
+  <button class="btn save" id="saveBtn" disabled onclick="saveSnap()">💾 Запази .snap</button>
+</div>
+
+<input type="file" id="fileInput" accept=".snap,.json" style="display:none">
+
+<div id="dropZone">
+  <div class="icon">📁</div>
+  <p>Плъзни .snap файл тук</p>
+  <small>или кликни за да избереш файл</small>
+</div>
+
+<div id="editor">
+  <div class="tbl-wrap">
+    <table id="mainTable">
+      <thead>
+        <tr>
+          <th style="width:24px"></th>
+          <th>#</th>
+          <th>Channel Name</th>
+          <th>Source Name</th>
+          <th>Grp</th>
+          <th>In</th>
+          <th>Alt Grp</th>
+          <th>Alt In</th>
+          <th>+48V</th>
+          <th>Ø</th>
+          <th>Gain (dB)</th>
+          <th>Trim</th>
+          <th>Pan</th>
+          <th>LC (Hz)</th>
+          <th>LC on</th>
+        </tr>
+      </thead>
+      <tbody id="mainBody"></tbody>
+    </table>
+  </div>
+  <p class="hint">Tab / Shift+Tab · Enter / Shift+Enter · ↑ ↓ ← → &nbsp;|&nbsp; +48V / LC on: кликни клетката &nbsp;|&nbsp; Колонките: дръпни десния край на хедъра</p>
+</div>
+
+<script>
+let snapData = null;
+let currentFilename = 'snapshot';
+
+// Navigable data-col values (skipping bool cells which use data-col='bool')
+// 1=ChName 2=SrcName 3=Routing 4=AltRouting 6=Gain 7=Trim 8=Pan 10=LC_freq
+// bool cells: data-col='vph', data-col='pol', data-col='lc'
+// Nav order: 1,2,3,4,6,7,8,10
+const NAV_SEQUENCE = [1, 2, 3, 4, 5, 55, 6, 7, 8, 10];
+
+function prevNavCol(dc) {
+  const i = NAV_SEQUENCE.indexOf(dc);
+  return i > 0 ? NAV_SEQUENCE[i-1] : null;
+}
+function nextNavCol(dc) {
+  const i = NAV_SEQUENCE.indexOf(dc);
+  return i >= 0 && i < NAV_SEQUENCE.length-1 ? NAV_SEQUENCE[i+1] : null;
+}
+
+function getSrcName(io_in, grp, inp) { return io_in?.[grp]?.[String(inp)]?.name || ''; }
+function getGain(io_in, grp, inp)    { const g = io_in?.[grp]?.[String(inp)]?.g; return g !== undefined ? g : 0; }
+function getVph(io_in, grp, inp)     { return !!io_in?.[grp]?.[String(inp)]?.vph; }
+function ensureIo(io_in, grp, inp) {
+  if (!io_in[grp]) io_in[grp] = {};
+  if (!io_in[grp][inp]) io_in[grp][inp] = {mode:'M',g:0,vph:false,mute:false,pol:false,col:1,name:'',icon:0,tags:'',rmt:'OFF',rcvc:false};
+}
+
+function focusCell(td) {
+  if (!td) return;
+  document.querySelectorAll('td.cell-focus').forEach(c => c.classList.remove('cell-focus'));
+  td.classList.add('cell-focus');
+  const inp = td.querySelector('input');
+  if (inp && !inp.disabled) { inp.focus(); inp.select(); }
+}
+
+function findCell(row, dataCol) {
+  return document.querySelector(`td[data-row="${row}"][data-col="${dataCol}"]`);
+}
+
+function handleKeydown(e, td) {
+  const row = parseInt(td.dataset.row);
+  const dc  = parseInt(td.dataset.col);
+  let target = null;
+
+  if (e.key === 'Tab') {
+    e.preventDefault();
+    if (e.shiftKey) {
+      const prev = prevNavCol(dc);
+      target = prev ? findCell(row, prev) : findCell(row-1, NAV_SEQUENCE[NAV_SEQUENCE.length-1]);
+    } else {
+      const next = nextNavCol(dc);
+      target = next ? findCell(row, next) : findCell(row+1, NAV_SEQUENCE[0]);
+    }
+  } else if (e.key === 'Enter') {
+    e.preventDefault();
+    target = e.shiftKey ? findCell(row-1, dc) : findCell(row+1, dc);
+  } else if (e.key === 'ArrowDown') {
+    e.preventDefault(); target = findCell(row+1, dc);
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault(); target = findCell(row-1, dc);
+  } else if (e.key === 'ArrowLeft') {
+    const inp = td.querySelector('input');
+    if (inp && inp.selectionStart === 0 && inp.selectionEnd === 0) {
+      e.preventDefault();
+      const prev = prevNavCol(dc);
+      if (prev) target = findCell(row, prev);
+    }
+  } else if (e.key === 'ArrowRight') {
+    const inp = td.querySelector('input');
+    if (inp && inp.selectionStart === inp.value.length && inp.selectionEnd === inp.value.length) {
+      e.preventDefault();
+      const next = nextNavCol(dc);
+      if (next) target = findCell(row, next);
+    }
+  }
+  if (target) focusCell(target);
+}
+
+function makeCell(val, dataCol, rowIdx, onChange, disabled) {
+  const td = document.createElement('td');
+  td.dataset.row = rowIdx;
+  td.dataset.col = dataCol;
+  const inp = document.createElement('input');
+  inp.type = 'text';
+  inp.value = (val !== undefined && val !== null) ? String(val) : '';
+  if (disabled) { inp.disabled = true; td.title = 'Само за входни канали'; }
+  inp.addEventListener('change', () => onChange && onChange(inp.value));
+  inp.addEventListener('focus', () => focusCell(td));
+  inp.addEventListener('keydown', e => handleKeydown(e, td));
+  td.appendChild(inp);
+  return td;
+}
+
+function makeBoolCell(val, boolKey, rowIdx, onChange, disabled) {
+  const td = document.createElement('td');
+  td.className = 'bool-cell';
+  td.dataset.row = rowIdx;
+  td.dataset.col = boolKey;
+  let state = !!val;
+  const render = () => {
+    td.textContent = state ? '✔' : '';
+    td.style.color = state ? '#1e8449' : '';
+    td.title = disabled ? 'Само за входни канали' : (state ? 'ON' : 'OFF');
+  };
+  render();
+  if (disabled) {
+    td.classList.add('dim');
+  } else {
+    td.addEventListener('click', () => { state = !state; render(); onChange && onChange(state); });
+  }
+  return td;
+}
+
+function buildRow(ae, type, i, rowIdx) {
+  const io_in  = ae.io?.in || {};
+  const obj    = type === 'ch' ? ae.ch[String(i)] : ae.aux[String(i)];
+  const conn   = obj.in.conn;
+  const grp    = conn.grp, inp = String(conn.in);
+  const altgrp = conn.altgrp, altin = String(conn.altin);
+  const isAux  = type === 'aux';
+
+  const tr = document.createElement('tr');
+  if (isAux) tr.classList.add('aux-row');
+  if (!isAux) {
+    tr.draggable = true;
+    tr.dataset.chidx = i;
+    tr.addEventListener('dragstart', onDragStart);
+    tr.addEventListener('dragover',  onDragOver);
+    tr.addEventListener('dragleave', onDragLeave);
+    tr.addEventListener('drop',      onDrop);
+    tr.addEventListener('dragend',   onDragEnd);
+  }
+
+  // drag handle
+  const handleTd = document.createElement('td');
+  handleTd.style.cssText = 'text-align:center;cursor:' + (isAux ? 'default' : 'grab') + ';color:#bbb;font-size:13px;user-select:none;';
+  handleTd.textContent = isAux ? '' : '⠿';
+  handleTd.title = isAux ? '' : 'Влачи за преместване';
+  tr.appendChild(handleTd);
+
+  // #
+  const numTd = document.createElement('td');
+  numTd.className = 'ch-num';
+  numTd.textContent = isAux ? `AUX ${i}` : i;
+  tr.appendChild(numTd);
+
+  // 1: Channel Name
+  tr.appendChild(makeCell(obj.name || '', 1, rowIdx, v => obj.name = v));
+
+  // 2: Source Name
+  tr.appendChild(makeCell(getSrcName(io_in, grp, inp), 2, rowIdx, v => {
+    ensureIo(io_in, conn.grp, String(conn.in));
+    io_in[conn.grp][String(conn.in)].name = v;
+  }));
+
+  // 3: Routing Group
+  tr.appendChild(makeCell(grp, 3, rowIdx, v => { conn.grp = v.trim().toUpperCase(); }));
+
+  // 4: Routing Input number
+  tr.appendChild(makeCell(inp, 4, rowIdx, v => { conn.in = isNaN(v) ? v : parseInt(v); }));
+
+  // 5: Alt Routing Group
+  tr.appendChild(makeCell(altgrp, 5, rowIdx, v => { conn.altgrp = v.trim().toUpperCase(); }));
+
+  // 6a: Alt Routing Input number (data-col 5b — use 5.5 not possible, use 55 as placeholder)
+  tr.appendChild(makeCell(altin, 55, rowIdx, v => { conn.altin = isNaN(v) ? v : parseInt(v); }));
+
+  // bool: +48V (data-col='vph')
+  tr.appendChild(makeBoolCell(getVph(io_in, grp, inp), 'vph', rowIdx, v => {
+    ensureIo(io_in, conn.grp, String(conn.in));
+    io_in[conn.grp][String(conn.in)].vph = v;
+  }));
+
+  // bool: Phase invert / Invert (data-col='inv') - from ch.in.set.inv
+  const invVal = !!obj.in?.set?.inv;
+  tr.appendChild(makeBoolCell(invVal, 'inv', rowIdx, v => {
+    if (obj.in?.set) obj.in.set.inv = v;
+  }));
+
+  // 6: Gain
+  tr.appendChild(makeCell(getGain(io_in, grp, inp), 6, rowIdx, v => {
+    ensureIo(io_in, conn.grp, String(conn.in));
+    io_in[conn.grp][String(conn.in)].g = parseFloat(v) || 0;
+  }));
+
+  // 7: Trim
+  tr.appendChild(makeCell(obj.in?.set?.trim ?? 0, 7, rowIdx, v => {
+    if (obj.in?.set) obj.in.set.trim = parseFloat(v) || 0;
+  }));
+
+  // 8: Pan
+  tr.appendChild(makeCell(obj.pan ?? 0, 8, rowIdx, v => { obj.pan = parseInt(v) || 0; }));
+
+  // 10: LC freq (only CH, not AUX)
+  const lcf = isAux ? '' : (obj.flt?.lcf ?? 80);
+  tr.appendChild(makeCell(isAux ? '' : Math.round(lcf), 10, rowIdx, v => {
+    if (!isAux && obj.flt) obj.flt.lcf = parseFloat(v) || 80;
+  }, isAux));
+
+  // bool: LC on (data-col='lc')
+  const lcOn = isAux ? false : !!obj.flt?.lc;
+  tr.appendChild(makeBoolCell(lcOn, 'lc', rowIdx, v => {
+    if (!isAux && obj.flt) obj.flt.lc = v;
+  }, isAux));
+
+  return tr;
+}
+
+function buildTable(ae) {
+  const body = document.getElementById('mainBody');
+  body.innerHTML = '';
+  let rowIdx = 1;
+  for (let i = 1; i <= 40; i++, rowIdx++) body.appendChild(buildRow(ae, 'ch', i, rowIdx));
+  for (let i = 1; i <= 8;  i++, rowIdx++) body.appendChild(buildRow(ae, 'aux', i, rowIdx));
+}
+
+function loadSnap(file) {
+  currentFilename = file.name.replace(/\.snap$/i, '');
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      snapData = JSON.parse(e.target.result);
+      document.getElementById('dropZone').style.display = 'none';
+      document.getElementById('editor').style.display = 'block';
+      document.getElementById('saveBtn').disabled = false;
+      document.getElementById('titlebar').textContent = '🎛 ' + file.name;
+      buildTable(snapData.ae_data);
+    } catch(err) { alert('Грешка при четене на файла'); }
+  };
+  reader.readAsText(file);
+}
+
+
+// ---- Drag & Drop reorder (CH only) ----
+let dragSrcIdx = null;
+
+function onDragStart(e) {
+  dragSrcIdx = parseInt(this.dataset.chidx);
+  this.style.opacity = '0.4';
+  e.dataTransfer.effectAllowed = 'move';
+}
+function onDragOver(e) {
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+  document.querySelectorAll('tr.drop-target').forEach(r => r.classList.remove('drop-target'));
+  this.classList.add('drop-target');
+}
+function onDragLeave() {
+  this.classList.remove('drop-target');
+}
+function onDragEnd() {
+  this.style.opacity = '';
+  document.querySelectorAll('tr.drop-target').forEach(r => r.classList.remove('drop-target'));
+}
+function onDrop(e) {
+  e.preventDefault();
+  const dropIdx = parseInt(this.dataset.chidx);
+  if (!dragSrcIdx || dragSrcIdx === dropIdx) return;
+  reorderChannels(dragSrcIdx, dropIdx);
+}
+
+function reorderChannels(fromIdx, toIdx) {
+  const ae = snapData.ae_data;
+  const io_in = ae.io?.in || {};
+
+  // Build ordered array of channel keys [1..40]
+  const order = Array.from({length: 40}, (_, i) => i + 1);
+
+  // Remove fromIdx from its position
+  const removed = order.splice(order.indexOf(fromIdx), 1)[0];
+  // Insert before toIdx's new position
+  const insertAt = order.indexOf(toIdx);
+  order.splice(insertAt, 0, removed);
+
+  // Deep clone all ch objects and their io.in entries
+  const chSnapshot = {};
+  const ioSnapshot = {};
+  for (let i = 1; i <= 40; i++) {
+    chSnapshot[i] = JSON.parse(JSON.stringify(ae.ch[String(i)]));
+    const conn = ae.ch[String(i)].in.conn;
+    const grp = conn.grp, inp = String(conn.in);
+    const ioKey = grp + '.' + inp;
+    if (!ioSnapshot[ioKey]) {
+      const entry = io_in?.[grp]?.[inp];
+      ioSnapshot[ioKey] = entry ? JSON.parse(JSON.stringify(entry)) : null;
+    }
+  }
+
+  // Reassign: new slot i gets data from order[i-1]
+  for (let newSlot = 1; newSlot <= 40; newSlot++) {
+    const oldSlot = order[newSlot - 1];
+    const chData  = chSnapshot[oldSlot];
+    const oldConn = chData.in.conn;
+    const oldGrp  = oldConn.grp, oldInp = String(oldConn.in);
+    const ioKey   = oldGrp + '.' + oldInp;
+
+    ae.ch[String(newSlot)] = chData;
+
+    // Restore io.in for this slot's source
+    if (ioSnapshot[ioKey]) {
+      if (!io_in[oldGrp]) io_in[oldGrp] = {};
+      io_in[oldGrp][oldInp] = ioSnapshot[ioKey];
+    }
+  }
+
+  buildTable(ae);
+}
+
+function saveSnap() {
+  if (!snapData) return;
+  const json = JSON.stringify(snapData, null, 2);
+  const blob = new Blob([json], {type: 'application/octet-stream'});
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url; a.download = currentFilename + '_edited.snap';
+  document.body.appendChild(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 1000);
+}
+
+document.getElementById('fileInput').addEventListener('change', e => {
+  if (e.target.files[0]) loadSnap(e.target.files[0]);
+});
+const dz = document.getElementById('dropZone');
+dz.addEventListener('click', () => document.getElementById('fileInput').click());
+dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('drag-over'); });
+dz.addEventListener('dragleave', () => dz.classList.remove('drag-over'));
+dz.addEventListener('drop', e => {
+  e.preventDefault(); dz.classList.remove('drag-over');
+  if (e.dataTransfer.files[0]) loadSnap(e.dataTransfer.files[0]);
+});
+</script>
+</body>
+</html>
